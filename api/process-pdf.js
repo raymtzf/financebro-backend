@@ -174,6 +174,7 @@ function parseLineDebug(line, lineNumber) {
     category: 'Debug',
     raw_line: line
   };
+  // Updated for debug
   
   console.log(`Result:`, result);
   return result;
