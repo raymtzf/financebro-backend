@@ -1,7 +1,7 @@
 {
   "functions": {
     "api/process-pdf.js": {
-      "runtime": "@vercel/node@3.0.7"
+      "runtime": "@vercel/node@18.17.0"
     }
   }
 }
