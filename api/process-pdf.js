@@ -13,8 +13,8 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') {
         res.status(200).json({
-            status: "PDF Processor Ready (WITH USER TIP)",
-            message: "Fixed: day comes BEFORE description, not after"
+            status: "PDF Processor Ready (TABULAR PARSER)",
+            message: "Understanding Banregio tabular format: DIA|CONCEPTO|CARGOS|ABONOS"
         });
         return;
     }
@@ -42,8 +42,8 @@ export default async function handler(req, res) {
             
             console.log('PDF text extracted, length:', pdfText.length);
             
-            // Use corrected logic with user tip
-            const result = processBanregioPDFWithTip(pdfText, filename);
+            // Use tabular parser
+            const result = processBanregioTabular(pdfText, filename);
             
             res.status(200).json(result);
             
@@ -60,16 +60,16 @@ export default async function handler(req, res) {
     res.status(405).json({ error: "Method not allowed" });
 }
 
-function processBanregioPDFWithTip(pdfText, filename) {
-    console.log('Processing Banregio PDF with user tip...');
+function processBanregioTabular(pdfText, filename) {
+    console.log('Processing Banregio PDF with tabular parser...');
     
     try {
         // Extract statement period
         const period = extractStatementPeriod(pdfText);
         console.log('Extracted period:', period);
         
-        // Use corrected extraction with tip
-        const transactions = extractTransactionsWithTip(pdfText, period);
+        // Extract transactions using tabular format understanding
+        const transactions = extractTabularTransactions(pdfText, period);
         
         console.log(`Extracted ${transactions.length} transactions`);
         
@@ -80,7 +80,7 @@ function processBanregioPDFWithTip(pdfText, filename) {
                 filename: filename,
                 statement_period: period,
                 total_transactions: transactions.length,
-                processing_method: "Corrected with user tip: day before description"
+                processing_method: "Tabular parser - DIA|CONCEPTO|CARGOS|ABONOS format"
             }
         };
         
@@ -117,107 +117,48 @@ function extractStatementPeriod(pdfText) {
     return { month: 3, year: 2024, month_name: 'Marzo' };
 }
 
-function extractTransactionsWithTip(pdfText, period) {
+function extractTabularTransactions(pdfText, period) {
     const transactions = [];
     const lines = pdfText.split('\n');
     
-    console.log('Processing', lines.length, 'lines with user tip');
+    console.log('Processing', lines.length, 'lines with tabular parser');
     
+    // Find the transaction table section
+    let inTransactionTable = false;
     let i = 0;
     
     while (i < lines.length) {
         const line = lines[i].trim();
         
-        // Look for amount lines "amount1 amount2"
-        const amountMatch = line.match(/^\s*([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$/);
-        
-        if (amountMatch) {
-            const amount1 = parseFloat(amountMatch[1].replace(/,/g, ''));
-            
-            console.log('Found amount line:', line, '→', amount1);
-            
-            // TIP: Look for day BEFORE collecting description
-            let dayFound = null;
-            let descriptionStart = i + 1;
-            
-            // Check next few lines for a standalone day number
-            for (let k = i + 1; k < Math.min(i + 5, lines.length); k++) {
-                const checkLine = lines[k].trim();
-                
-                // If it's a standalone day number (01, 02, 03, etc.)
-                if (checkLine.match(/^\d{1,2}$/) && parseInt(checkLine) >= 1 && parseInt(checkLine) <= 31) {
-                    dayFound = parseInt(checkLine);
-                    descriptionStart = k + 1; // Description starts AFTER the day
-                    console.log(`📅 Found day BEFORE description: ${dayFound}`);
-                    break;
-                }
-                
-                // If it's a description line, stop looking for day
-                if (checkLine && checkLine.length > 5 && !checkLine.match(/^\d+$/)) {
-                    break;
-                }
-            }
-            
-            // Collect description starting from the correct position
-            let description = '';
-            let j = descriptionStart;
-            const maxLookAhead = 15;
-            
-            while (j < lines.length && j < descriptionStart + maxLookAhead) {
-                const nextLine = lines[j].trim();
-                
-                // Stop if we hit another amount line
-                if (nextLine.match(/^\s*[\d,]+\.\d{2}\s+[\d,]+\.\d{2}\s*$/)) {
-                    break;
-                }
-                
-                // Stop if we hit another day number (start of next transaction)
-                if (nextLine.match(/^\d{1,2}$/) && parseInt(nextLine) <= 31) {
-                    break;
-                }
-                
-                // Add description lines
-                if (nextLine && nextLine.length > 0 && 
-                    !nextLine.match(/^(DIA|CONCEPTO|CARGOS|ABONOS|SALDO|Page \d+ of \d+)$/i)) {
-                    if (description) description += ' ';
-                    description += nextLine;
-                }
-                
-                j++;
-            }
-            
-            // Create transaction if we have description
-            if (description && description.length > 10) {
-                
-                // Get correct date using tip
-                const correctDate = buildDateFromDayAndDescription(dayFound, description, period);
-                
-                // Detect cargo/abono
-                const isAbono = detectIfAbonoWorking(description);
-                
-                const transaction = {
-                    transaction_date: correctDate,
-                    description: description.trim(),
-                    amount: isAbono ? amount1 : -amount1,
-                    transaction_type: isAbono ? 'credit' : 'debit',
-                    category: getCategoryFromDescription(description)
-                };
-                
-                transactions.push(transaction);
-                
-                console.log('✅ Created transaction:', {
-                    day: dayFound,
-                    date: correctDate,
-                    amount: transaction.amount,
-                    type: transaction.transaction_type,
-                    desc: description.substring(0, 50) + '...'
-                });
-            }
-            
-            i = j;
-        } else {
+        // Look for table headers
+        if (line.includes('CONCEPTO') && (line.includes('CARGOS') || line.includes('ABONOS'))) {
+            console.log('📊 Found transaction table headers:', line);
+            inTransactionTable = true;
             i++;
+            continue;
         }
+        
+        // Skip until we're in the transaction table
+        if (!inTransactionTable) {
+            i++;
+            continue;
+        }
+        
+        // Process transaction rows
+        const transactionData = parseTransactionRow(lines, i, period);
+        
+        if (transactionData.transaction) {
+            transactions.push(transactionData.transaction);
+            console.log('✅ Added transaction:', {
+                day: transactionData.day,
+                date: transactionData.transaction.transaction_date,
+                amount: transactionData.transaction.amount,
+                type: transactionData.transaction.transaction_type,
+                desc: transactionData.transaction.description.substring(0, 40) + '...'
+            });
+        }
+        
+        i = transactionData.nextIndex || i + 1;
     }
     
     // Remove duplicates and sort
@@ -225,86 +166,175 @@ function extractTransactionsWithTip(pdfText, period) {
     return uniqueTransactions.sort((a, b) => a.transaction_date.localeCompare(b.transaction_date));
 }
 
-function buildDateFromDayAndDescription(dayFound, description, period) {
-    console.log('Building date from day and description...');
+function parseTransactionRow(lines, startIndex, period) {
+    let day = null;
+    let description = '';
+    let cargoAmount = 0;
+    let abonoAmount = 0;
+    let i = startIndex;
     
-    // First, try to find full date DD/MM/YYYY in description
-    const dateMatches = description.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/g);
+    // Look for a day number at the start of a line
+    const currentLine = lines[i] ? lines[i].trim() : '';
     
-    if (dateMatches && dateMatches.length > 0) {
-        const dateMatch = dateMatches[0].match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-        const day = parseInt(dateMatch[1]);
-        const month = parseInt(dateMatch[2]);
-        const year = parseInt(dateMatch[3]);
+    // Check if current line starts with a day number
+    const dayMatch = currentLine.match(/^(\d{1,2})\s+(.*)$/);
+    
+    if (dayMatch) {
+        const possibleDay = parseInt(dayMatch[1]);
         
-        if (day >= 1 && day <= 31 && month >= 1 && month <= 12 && year > 2020) {
-            const date = new Date(year, month - 1, day);
-            const dateString = date.toISOString().split('T')[0];
+        // Validate it's a reasonable day
+        if (possibleDay >= 1 && possibleDay <= 31) {
+            day = possibleDay;
+            const restOfLine = dayMatch[2];
             
-            console.log(`🎯 Using FULL date from description: ${day}/${month}/${year} → ${dateString}`);
-            return dateString;
+            console.log(`📅 Found transaction starting with day ${day}:`, restOfLine);
+            
+            // Extract description and amounts from this row and following rows
+            const rowData = extractTransactionData(lines, i, restOfLine);
+            
+            description = rowData.description;
+            cargoAmount = rowData.cargoAmount;
+            abonoAmount = rowData.abonoAmount;
+            
+            // Create transaction if we have valid data
+            if (description && (cargoAmount > 0 || abonoAmount > 0)) {
+                const isAbono = abonoAmount > 0;
+                const amount = isAbono ? abonoAmount : cargoAmount;
+                
+                const transaction = {
+                    transaction_date: buildDateFromDay(day, period),
+                    description: description.trim(),
+                    amount: isAbono ? amount : -amount,
+                    transaction_type: isAbono ? 'credit' : 'debit',
+                    category: getCategoryFromDescription(description)
+                };
+                
+                return {
+                    transaction: transaction,
+                    day: day,
+                    nextIndex: rowData.nextIndex
+                };
+            }
+            
+            return { transaction: null, nextIndex: rowData.nextIndex };
         }
     }
     
-    // If no full date found, use the day that comes before description (USER TIP)
-    if (dayFound !== null) {
+    return { transaction: null, nextIndex: i + 1 };
+}
+
+function extractTransactionData(lines, startIndex, firstLineContent) {
+    let description = firstLineContent || '';
+    let cargoAmount = 0;
+    let abonoAmount = 0;
+    let i = startIndex;
+    
+    // Process current line and following lines until next transaction or end
+    while (i < lines.length && i < startIndex + 10) { // Look at next 10 lines max
+        const line = lines[i] ? lines[i].trim() : '';
+        
+        // Skip if empty
+        if (!line) {
+            i++;
+            continue;
+        }
+        
+        // Stop if we hit another day number (start of next transaction)
+        if (i > startIndex && line.match(/^\d{1,2}\s+/)) {
+            break;
+        }
+        
+        // Extract amounts from this line
+        const amounts = line.match(/[\d,]+\.\d{2}/g);
+        if (amounts) {
+            amounts.forEach(amountStr => {
+                const amount = parseFloat(amountStr.replace(/,/g, ''));
+                
+                // Determine if it's in CARGOS or ABONOS column based on context
+                const lineContext = line.toLowerCase();
+                
+                // If line contains transaction keywords, it's likely the description
+                if (lineContext.includes('tra ') || lineContext.includes('int ') || 
+                    lineContext.includes('spei') || lineContext.includes('pago')) {
+                    
+                    // Add to description if not already included
+                    if (i === startIndex) {
+                        // Already included in firstLineContent
+                    } else {
+                        description += ' ' + line.replace(/[\d,]+\.\d{2}/g, '').trim();
+                    }
+                    
+                    // Determine cargo vs abono based on transaction type
+                    if (lineContext.includes('tra spei-') || lineContext.includes('comision')) {
+                        cargoAmount = Math.max(cargoAmount, amount);
+                    } else if (lineContext.includes('int ') || lineContext.includes('pago mr sabor')) {
+                        abonoAmount = Math.max(abonoAmount, amount);
+                    } else {
+                        // Default logic based on common patterns
+                        if (lineContext.includes('natalia') || lineContext.includes('facebook') || 
+                            lineContext.includes('administracion')) {
+                            cargoAmount = Math.max(cargoAmount, amount);
+                        } else {
+                            abonoAmount = Math.max(abonoAmount, amount);
+                        }
+                    }
+                } else {
+                    // Pure amount line - try to determine context
+                    if (cargoAmount === 0 && abonoAmount === 0) {
+                        // First amount found - determine based on description context
+                        const descLower = description.toLowerCase();
+                        if (descLower.includes('tra spei-') || descLower.includes('comision') || 
+                            descLower.includes('facebook')) {
+                            cargoAmount = amount;
+                        } else if (descLower.includes('int ') || descLower.includes('pago mr sabor')) {
+                            abonoAmount = amount;
+                        } else {
+                            // Default to cargo
+                            cargoAmount = amount;
+                        }
+                    }
+                }
+            });
+        } else {
+            // No amounts, add to description if meaningful
+            if (i > startIndex && line.length > 3 && 
+                !line.match(/^(DIA|CONCEPTO|CARGOS|ABONOS|SALDO|Page)$/i)) {
+                description += ' ' + line;
+            }
+        }
+        
+        i++;
+    }
+    
+    console.log(`📝 Extracted data: desc="${description.substring(0, 50)}...", cargo=${cargoAmount}, abono=${abonoAmount}`);
+    
+    return {
+        description: description,
+        cargoAmount: cargoAmount,
+        abonoAmount: abonoAmount,
+        nextIndex: i
+    };
+}
+
+function buildDateFromDay(day, period) {
+    try {
         const year = period.year;
         const month = period.month;
         
         // Validate day for this month
         const maxDay = new Date(year, month, 0).getDate();
-        const validDay = Math.min(Math.max(1, dayFound), maxDay);
+        const validDay = Math.min(Math.max(1, day), maxDay);
         
         const date = new Date(year, month - 1, validDay);
         const dateString = date.toISOString().split('T')[0];
         
-        console.log(`🎯 Using DAY from tip: ${dayFound} → ${period.month_name} ${dayFound}, ${year} → ${dateString}`);
+        console.log(`📅 Built date: day ${day} → ${period.month_name} ${validDay}, ${year} → ${dateString}`);
+        
         return dateString;
+    } catch (error) {
+        console.error('Error building date:', error);
+        return new Date().toISOString().split('T')[0];
     }
-    
-    // Fallback to period start
-    console.log(`⚠️ No date found, using period start`);
-    return `${period.year}-${String(period.month).padStart(2, '0')}-01`;
-}
-
-function detectIfAbonoWorking(description) {
-    const desc = description.toLowerCase();
-    
-    // ABONO patterns
-    const abonoPatterns = [
-        'int ', 'abono', 'deposito', 'pago mr sabor', 'ingreso',
-        'insumos', 'multisabor'
-    ];
-    
-    // CARGO patterns
-    const cargoPatterns = [
-        'tra spei-', 'comision', 'administracion', 'manejo de cuenta',
-        'cargo', 'retiro', 'transferencia de', 'facebook', 'facebk'
-    ];
-    
-    // Check abono patterns
-    for (const pattern of abonoPatterns) {
-        if (desc.includes(pattern)) {
-            console.log(`🟢 ABONO detected: ${pattern}`);
-            return true;
-        }
-    }
-    
-    // Check cargo patterns
-    for (const pattern of cargoPatterns) {
-        if (desc.includes(pattern)) {
-            console.log(`🔴 CARGO detected: ${pattern}`);
-            return false;
-        }
-    }
-    
-    // Check recipient names
-    if (desc.includes('natalia') || desc.includes('lupita') || desc.includes('granola') || desc.includes('nueztra')) {
-        console.log(`🔴 CARGO detected: recipient name`);
-        return false;
-    }
-    
-    return false;
 }
 
 function getCategoryFromDescription(description) {
@@ -326,9 +356,10 @@ function getCategoryFromDescription(description) {
 function removeDuplicates(transactions) {
     const seen = new Set();
     return transactions.filter(transaction => {
-        const shortDesc = transaction.description.substring(0, 50);
-        const key = `${transaction.transaction_date}-${shortDesc}-${transaction.amount}`;
+        const shortDesc = transaction.description.substring(0, 60).replace(/\s+/g, ' ').trim();
+        const key = `${transaction.transaction_date}-${shortDesc}-${Math.abs(transaction.amount)}`;
         if (seen.has(key)) {
+            console.log(`🗑️ Removing duplicate: ${shortDesc}`);
             return false;
         }
         seen.add(key);
