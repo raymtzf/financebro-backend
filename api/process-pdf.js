@@ -13,8 +13,8 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') {
         res.status(200).json({
-            status: "PDF Processor Ready (DEFINITIVE)",
-            message: "Ultra precise parser - extracts dates from descriptions"
+            status: "PDF Processor Ready (CONSERVATIVE FIX)",
+            message: "Back to working version, only fixing dates"
         });
         return;
     }
@@ -42,8 +42,8 @@ export default async function handler(req, res) {
             
             console.log('PDF text extracted, length:', pdfText.length);
             
-            // Process with definitive precise parser
-            const result = processBanregioPDFDefinitive(pdfText, filename);
+            // Use the working logic but fix dates
+            const result = processBanregioPDFConservative(pdfText, filename);
             
             res.status(200).json(result);
             
@@ -60,16 +60,16 @@ export default async function handler(req, res) {
     res.status(405).json({ error: "Method not allowed" });
 }
 
-function processBanregioPDFDefinitive(pdfText, filename) {
-    console.log('Processing Banregio PDF with definitive parser...');
+function processBanregioPDFConservative(pdfText, filename) {
+    console.log('Processing Banregio PDF conservatively...');
     
     try {
         // Extract statement period
         const period = extractStatementPeriod(pdfText);
         console.log('Extracted period:', period);
         
-        // Extract transactions with single precise strategy
-        const transactions = extractTransactionsDefinitive(pdfText, period);
+        // Use the original working strategy but fix dates
+        const transactions = extractTransactionsWorking(pdfText, period);
         
         console.log(`Extracted ${transactions.length} transactions`);
         
@@ -80,7 +80,7 @@ function processBanregioPDFDefinitive(pdfText, filename) {
                 filename: filename,
                 statement_period: period,
                 total_transactions: transactions.length,
-                processing_method: "Definitive precise Banregio parser"
+                processing_method: "Conservative fix - working version with correct dates"
             }
         };
         
@@ -117,29 +117,29 @@ function extractStatementPeriod(pdfText) {
     return { month: 3, year: 2024, month_name: 'Marzo' };
 }
 
-function extractTransactionsDefinitive(pdfText, period) {
+function extractTransactionsWorking(pdfText, period) {
     const transactions = [];
     const lines = pdfText.split('\n');
     
-    console.log('Processing', lines.length, 'lines with definitive parser');
+    console.log('Processing', lines.length, 'lines (working method)');
     
     let i = 0;
     
     while (i < lines.length) {
         const line = lines[i].trim();
         
-        // Look for amount patterns: "amount1 amount2" 
+        // Use the WORKING pattern: look for amount lines "amount1 amount2"
         const amountMatch = line.match(/^\s*([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$/);
         
         if (amountMatch) {
             const amount1 = parseFloat(amountMatch[1].replace(/,/g, ''));
             
-            console.log(`Found amount line: ${line} → ${amount1}`);
+            console.log('Found amount line:', line, '→', amount1);
             
-            // Collect full description from next lines
-            let fullDescription = '';
+            // Collect description using the WORKING method
+            let description = '';
             let j = i + 1;
-            const maxLookAhead = 25; // Look further for complete description
+            const maxLookAhead = 15;
             
             while (j < lines.length && j < i + maxLookAhead) {
                 const nextLine = lines[j].trim();
@@ -149,48 +149,46 @@ function extractTransactionsDefinitive(pdfText, period) {
                     break;
                 }
                 
-                // Stop if we hit a standalone day number (but collect it if it's part of description)
+                // Stop if we hit a standalone day number
                 if (nextLine.match(/^\d{1,2}$/) && parseInt(nextLine) <= 31) {
                     j++;
                     break;
                 }
                 
-                // Add meaningful description lines
+                // Add description lines
                 if (nextLine && nextLine.length > 0 && 
-                    !nextLine.match(/^(DIA|CONCEPTO|CARGOS|ABONOS|SALDO|Page \d+ of \d+)$/i)) {
-                    if (fullDescription && !fullDescription.endsWith(' ')) {
-                        fullDescription += ' ';
-                    }
-                    fullDescription += nextLine;
+                    !nextLine.match(/^(DIA|CONCEPTO|CARGOS|ABONOS|SALDO)$/i)) {
+                    if (description) description += ' ';
+                    description += nextLine;
                 }
                 
                 j++;
             }
             
-            // Only process if we have a meaningful description
-            if (fullDescription && fullDescription.length > 10) {
+            // Only create transaction if we have description
+            if (description && description.length > 10) {
                 
-                // Extract date from description (look for DD/MM/YYYY pattern)
-                const dateFromDesc = extractDateFromDescription(fullDescription, period);
+                // FIX: Extract correct date from description
+                const correctDate = extractCorrectDate(description, period);
                 
-                // Determine if it's cargo or abono
-                const isAbono = detectIfAbonoDefinitive(fullDescription);
+                // Use the WORKING detection method
+                const isAbono = detectIfAbonoWorking(description);
                 
                 const transaction = {
-                    transaction_date: dateFromDesc,
-                    description: fullDescription.trim(),
+                    transaction_date: correctDate,
+                    description: description.trim(),
                     amount: isAbono ? amount1 : -amount1,
                     transaction_type: isAbono ? 'credit' : 'debit',
-                    category: getCategoryFromDescription(fullDescription)
+                    category: getCategoryFromDescription(description)
                 };
                 
                 transactions.push(transaction);
                 
-                console.log(`✅ Created transaction:`, {
-                    date: dateFromDesc,
+                console.log('Created transaction:', {
+                    date: correctDate,
                     amount: transaction.amount,
                     type: transaction.transaction_type,
-                    desc: fullDescription.substring(0, 50) + '...'
+                    desc: description.substring(0, 40) + '...'
                 });
             }
             
@@ -201,63 +199,73 @@ function extractTransactionsDefinitive(pdfText, period) {
     }
     
     // Remove duplicates and sort
-    const uniqueTransactions = removeDuplicatesStrict(transactions);
+    const uniqueTransactions = removeDuplicates(transactions);
     return uniqueTransactions.sort((a, b) => a.transaction_date.localeCompare(b.transaction_date));
 }
 
-function extractDateFromDescription(description, period) {
-    // Look for date pattern DD/MM/YYYY in description
-    const dateMatch = description.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+function extractCorrectDate(description, period) {
+    console.log('Extracting date from:', description.substring(0, 100));
     
-    if (dateMatch) {
+    // Look for DD/MM/YYYY pattern in description
+    const dateMatches = description.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/g);
+    
+    if (dateMatches && dateMatches.length > 0) {
+        // Use the first date found
+        const dateMatch = dateMatches[0].match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
         const day = parseInt(dateMatch[1]);
         const month = parseInt(dateMatch[2]);
         const year = parseInt(dateMatch[3]);
         
-        // Validate the extracted date
+        // Validate and create date
         if (day >= 1 && day <= 31 && month >= 1 && month <= 12 && year > 2020) {
             const date = new Date(year, month - 1, day);
             const dateString = date.toISOString().split('T')[0];
             
-            console.log(`📅 Extracted date from description: ${day}/${month}/${year} → ${dateString}`);
+            console.log(`✅ Found date in description: ${day}/${month}/${year} → ${dateString}`);
             return dateString;
         }
     }
     
-    // Fallback: use period info with day 1
-    console.log(`⚠️ No date found in description, using period default`);
+    // Look for DD-MM-YYYY pattern as fallback
+    const altDateMatch = description.match(/(\d{1,2})-(\d{1,2})-(\d{4})/);
+    if (altDateMatch) {
+        const day = parseInt(altDateMatch[1]);
+        const month = parseInt(altDateMatch[2]);
+        const year = parseInt(altDateMatch[3]);
+        
+        if (day >= 1 && day <= 31 && month >= 1 && month <= 12 && year > 2020) {
+            const date = new Date(year, month - 1, day);
+            const dateString = date.toISOString().split('T')[0];
+            
+            console.log(`✅ Found alt date in description: ${day}-${month}-${year} → ${dateString}`);
+            return dateString;
+        }
+    }
+    
+    // Fallback to period start date
+    console.log(`⚠️ No date found in description, using period start`);
     return `${period.year}-${String(period.month).padStart(2, '0')}-01`;
 }
 
-function detectIfAbonoDefinitive(description) {
+function detectIfAbonoWorking(description) {
     const desc = description.toLowerCase();
     
-    // Very specific patterns for ABONOS (ingresos)
+    // ABONO patterns (these were working)
     const abonoPatterns = [
-        'int ', // INT transactions are typically credits
-        'abono', 
-        'deposito',
-        'pago mr sabor',
-        'insumos y multisabor es mr sabor', // From your examples
-        'insumos'
+        'int ', 'abono', 'deposito', 'pago mr sabor', 'ingreso',
+        'insumos', 'multisabor'
     ];
     
-    // Very specific patterns for CARGOS (gastos)
+    // CARGO patterns (these were working)
     const cargoPatterns = [
-        'tra spei-', // TRA SPEI transactions are typically debits
-        'comision',
-        'administracion',
-        'manejo de cuenta',
-        'cargo',
-        'retiro',
-        'facebook',
-        'facebk'
+        'tra spei-', 'comision', 'administracion', 'manejo de cuenta',
+        'cargo', 'retiro', 'transferencia de', 'facebook', 'facebk'
     ];
     
-    // Check abono patterns first
+    // Check abono patterns
     for (const pattern of abonoPatterns) {
         if (desc.includes(pattern)) {
-            console.log(`🟢 Detected ABONO by pattern: "${pattern}"`);
+            console.log(`🟢 ABONO detected: ${pattern}`);
             return true;
         }
     }
@@ -265,22 +273,19 @@ function detectIfAbonoDefinitive(description) {
     // Check cargo patterns
     for (const pattern of cargoPatterns) {
         if (desc.includes(pattern)) {
-            console.log(`🔴 Detected CARGO by pattern: "${pattern}"`);
+            console.log(`🔴 CARGO detected: ${pattern}`);
             return false;
         }
     }
     
-    // Specific recipient names (usually outgoing transfers)
-    const outgoingNames = ['natalia', 'lupita', 'granola', 'nueztra', 'sussy'];
-    for (const name of outgoingNames) {
-        if (desc.includes(name)) {
-            console.log(`🔴 Detected CARGO by recipient: "${name}"`);
-            return false;
-        }
+    // Check recipient names (usually outgoing)
+    if (desc.includes('natalia') || desc.includes('lupita') || desc.includes('granola') || desc.includes('nueztra')) {
+        console.log(`🔴 CARGO detected: recipient name`);
+        return false;
     }
     
-    // Default to cargo if uncertain
-    console.log(`⚪ Defaulting to CARGO for unclear transaction`);
+    // Default to cargo
+    console.log(`⚪ Defaulting to CARGO`);
     return false;
 }
 
@@ -300,15 +305,12 @@ function getCategoryFromDescription(description) {
     }
 }
 
-function removeDuplicatesStrict(transactions) {
+function removeDuplicates(transactions) {
     const seen = new Set();
     return transactions.filter(transaction => {
-        // Use very strict deduplication
-        const normalizedDesc = transaction.description.replace(/\s+/g, ' ').trim().substring(0, 60);
-        const key = `${transaction.transaction_date}-${normalizedDesc}-${Math.abs(transaction.amount)}`;
-        
+        const shortDesc = transaction.description.substring(0, 50);
+        const key = `${transaction.transaction_date}-${shortDesc}-${transaction.amount}`;
         if (seen.has(key)) {
-            console.log(`🗑️ Removing duplicate: ${normalizedDesc}`);
             return false;
         }
         seen.add(key);
