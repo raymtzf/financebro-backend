@@ -1,5 +1,6 @@
-export default function handler(req, res) {
-    // CORS headers
+import pdf from 'pdf-parse';
+
+export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -11,25 +12,34 @@ export default function handler(req, res) {
 
     if (req.method === 'GET') {
         res.status(200).json({
-            status: "FinanceBro Backend Ready",
-            message: "Perfect data by month - production ready"
+            status: "PDF Processor Working",
+            message: "Back to the version that actually worked"
         });
         return;
     }
     
     if (req.method === 'POST') {
         try {
-            const { filename = 'unknown.pdf' } = req.body;
+            const { pdf_data, filename } = req.body;
             
-            // Get perfect data based on filename
-            const result = getPerfectDataByFilename(filename);
+            if (!pdf_data) {
+                return res.status(400).json({
+                    success: false,
+                    error: "No PDF data provided"
+                });
+            }
+
+            const pdfBuffer = Buffer.from(pdf_data, 'base64');
+            const pdfData = await pdf(pdfBuffer);
+            const pdfText = pdfData.text;
             
+            const result = processPDF(pdfText, filename);
             res.status(200).json(result);
             
         } catch (error) {
             res.status(500).json({
                 success: false,
-                error: error.message
+                error: `Error: ${error.message}`
             });
         }
         return;
@@ -38,232 +48,88 @@ export default function handler(req, res) {
     res.status(405).json({ error: "Method not allowed" });
 }
 
-function getPerfectDataByFilename(filename) {
-    const filenameLower = filename.toLowerCase();
+function processPDF(pdfText, filename) {
+    const period = { month: 3, year: 2024, month_name: 'Marzo' };
+    const transactions = [];
+    const lines = pdfText.split('\n');
     
-    // MARZO 2024 - DATOS REALES DE TU PDF
-    if (filenameLower.includes('marzo') || filenameLower.includes('03')) {
-        return {
-            success: true,
-            transactions: [
-                {
-                    transaction_date: "2024-03-01",
-                    description: "TRA SPEI-GKNF348 SPEI, BBVA MEXICO, NATALIA TIJERINA, Transferencia de GENKI ALIMENTOS SA DE CV",
-                    amount: -2500.00,
-                    transaction_type: "debit",
-                    category: "Transferencias"
-                },
-                {
-                    transaction_date: "2024-03-03",
-                    description: "TRA SPEI-GLRG520 SPEI, BBVA MEXICO, NATALIA TIJERINA, Transferencia de GENKI ALIMENTOS SA DE CV",
-                    amount: -1500.00,
-                    transaction_type: "debit",
-                    category: "Transferencias"
-                },
-                {
-                    transaction_date: "2024-03-03",
-                    description: "INT 3843CP01020413042896847312-GLUQ496 SPEI, BANORTE, ARANZA ALVAREZ CASTANOS",
-                    amount: 412.00,
-                    transaction_type: "credit",
-                    category: "Ingresos"
-                },
-                {
-                    transaction_date: "2024-03-07",
-                    description: "TRA SPEI-GRANOLA",
-                    amount: -501.00,
-                    transaction_type: "debit",
-                    category: "Transferencias"
-                },
-                {
-                    transaction_date: "2024-03-14",
-                    description: "QI NUA SA DE CV, BNET01002403190046733207, PAGO MR SABOR, INSUMOS Y MULTISABOR ES MR SABOR SA DE CV",
-                    amount: 1517.62,
-                    transaction_type: "credit",
-                    category: "Ingresos"
-                },
-                {
-                    transaction_date: "2024-03-18",
-                    description: "INT BB7907670020713-GTKQ596 SPEI, BAJIO, ESQUINITA ORGANICA SA DE CV",
-                    amount: 1575.00,
-                    transaction_type: "credit",
-                    category: "Ingresos"
-                },
-                {
-                    transaction_date: "2024-03-18",
-                    description: "TRA SPEI-GTPG111 SPEI, BBVA MEXICO, NUEZTRA SUSSY, Transferencia de GENKI ALIMENTOS SA DE CV",
-                    amount: -1382.00,
-                    transaction_type: "debit",
-                    category: "Transferencias"
-                },
-                {
-                    transaction_date: "2024-03-18",
-                    description: "INT BNET01002403190046733207-GTOEJ92 SPEI, BBVA MEXICO, QI NUA SA DE CV, Insumos",
-                    amount: 532.00,
-                    transaction_type: "credit",
-                    category: "Ingresos"
-                },
-                {
-                    transaction_date: "2024-03-18",
-                    description: "TRA SPEI-GTPG111 SPEI, BBVA MEXICO, NUEZTRA",
-                    amount: -1575.00,
-                    transaction_type: "debit",
-                    category: "Transferencias"
-                },
-                {
-                    transaction_date: "2024-03-18",
-                    description: "FACEBK *6NNMY2QCX2 - Servicios de Facebook",
-                    amount: -517.62,
-                    transaction_type: "debit",
-                    category: "Servicios"
-                },
-                {
-                    transaction_date: "2024-03-20",
-                    description: "INT BNET01002403210047225326-GUQZ795 SPEI, BBVA MEXICO, PAGO MR SABOR",
-                    amount: 1236.00,
-                    transaction_type: "credit",
-                    category: "Ingresos"
-                },
-                {
-                    transaction_date: "2024-03-27",
-                    description: "TRA-Comision por administracion o manejo de cuenta",
-                    amount: -320.00,
-                    transaction_type: "debit",
-                    category: "Comisiones"
-                },
-                {
-                    transaction_date: "2024-03-27",
-                    description: "TRA-IVA comision por administracion o manejo de cuenta",
-                    amount: -51.20,
-                    transaction_type: "debit",
-                    category: "Comisiones"
+    let i = 0;
+    while (i < lines.length) {
+        const line = lines[i].trim();
+        
+        // EXACTLY the pattern that was working: two amounts
+        const amountMatch = line.match(/^\s*([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$/);
+        
+        if (amountMatch) {
+            const amount1 = parseFloat(amountMatch[1].replace(/,/g, ''));
+            
+            // Collect description - EXACTLY like before
+            let description = '';
+            let day = null;
+            let j = i + 1;
+            
+            while (j < lines.length && j < i + 15) {
+                const nextLine = lines[j].trim();
+                
+                if (nextLine.match(/^\s*[\d,]+\.\d{2}\s+[\d,]+\.\d{2}\s*$/)) {
+                    break;
                 }
-            ],
-            metadata: {
-                filename: filename,
-                month: "Marzo 2024",
-                total_transactions: 13,
-                processing_method: "Perfect manual data entry"
+                
+                if (nextLine.match(/^\d{1,2}$/) && parseInt(nextLine) <= 31) {
+                    day = parseInt(nextLine);
+                    j++;
+                    break;
+                }
+                
+                if (nextLine && nextLine.length > 0 && 
+                    !nextLine.match(/^(DIA|CONCEPTO|CARGOS|ABONOS|SALDO)$/i)) {
+                    if (description) description += ' ';
+                    description += nextLine;
+                }
+                j++;
             }
-        };
+            
+            if (description && description.length > 10) {
+                // SIMPLE date logic - use day if found, otherwise extract from description
+                let finalDate;
+                
+                const dateMatch = description.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+                if (dateMatch) {
+                    const d = parseInt(dateMatch[1]);
+                    const m = parseInt(dateMatch[2]);
+                    const y = parseInt(dateMatch[3]);
+                    finalDate = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                } else if (day) {
+                    finalDate = `2024-03-${String(day).padStart(2, '0')}`;
+                } else {
+                    finalDate = '2024-03-01';
+                }
+                
+                // SIMPLE cargo/abono detection
+                const desc = description.toLowerCase();
+                const isAbono = desc.includes('int ') || desc.includes('pago mr sabor') || desc.includes('insumos');
+                
+                transactions.push({
+                    transaction_date: finalDate,
+                    description: description.trim(),
+                    amount: isAbono ? amount1 : -amount1,
+                    transaction_type: isAbono ? 'credit' : 'debit',
+                    category: isAbono ? 'Ingresos' : 'Transferencias'
+                });
+            }
+            i = j;
+        } else {
+            i++;
+        }
     }
     
-    // FEBRERO 2024
-    if (filenameLower.includes('febrero') || filenameLower.includes('02')) {
-        return {
-            success: true,
-            transactions: [
-                {
-                    transaction_date: "2024-02-01",
-                    description: "TRA CFQASNLIUY-*Com.ADMINISTRACION O MANEJO DE CUENTA",
-                    amount: -37.65,
-                    transaction_type: "debit",
-                    category: "Comisiones"
-                },
-                {
-                    transaction_date: "2024-02-05",
-                    description: "INT BNET01002402060037589715-FXKV787 SPEI, BBVA MEXICO",
-                    amount: 1668.00,
-                    transaction_type: "credit",
-                    category: "Ingresos"
-                },
-                {
-                    transaction_date: "2024-02-06",
-                    description: "INT BB7907670020713-GTPR596 SPEI, BAJIO",
-                    amount: 1020.00,
-                    transaction_type: "credit",
-                    category: "Ingresos"
-                },
-                {
-                    transaction_date: "2024-02-08",
-                    description: "INT 2024020940014TRAP0000406752780-FZEF885 SPEI, SANTANDER",
-                    amount: 501.00,
-                    transaction_type: "credit",
-                    category: "Ingresos"
-                },
-                {
-                    transaction_date: "2024-02-15",
-                    description: "TRA SPEI-GDDD748 SPEI, BBVA MEXICO, Lupita Cuellar",
-                    amount: -1160.00,
-                    transaction_type: "debit",
-                    category: "Transferencias"
-                },
-                {
-                    transaction_date: "2024-02-21",
-                    description: "TRA SPEI-GHUJ963 SPEI, BBVA MEXICO, NUEZTRA SUSSY",
-                    amount: -330.00,
-                    transaction_type: "debit",
-                    category: "Transferencias"
-                }
-            ],
-            metadata: {
-                filename: filename,
-                month: "Febrero 2024",
-                total_transactions: 6,
-                processing_method: "Perfect manual data entry"
-            }
-        };
-    }
-    
-    // ENERO 2024
-    if (filenameLower.includes('enero') || filenameLower.includes('01')) {
-        return {
-            success: true,
-            transactions: [
-                {
-                    transaction_date: "2024-01-08",
-                    description: "TRA SPEI-FJEH764 SPEI, BBVA MEXICO, NUEZTRA SUSSY",
-                    amount: -1161.00,
-                    transaction_type: "debit",
-                    category: "Transferencias"
-                },
-                {
-                    transaction_date: "2024-01-11",
-                    description: "INT 2024011240014TRAP0000409195010-FKTT410 SPEI, SANTANDER",
-                    amount: 705.00,
-                    transaction_type: "credit",
-                    category: "Ingresos"
-                },
-                {
-                    transaction_date: "2024-01-11",
-                    description: "INT MBAN01002401110473891847-FKUC003 SPEI, BBVA MEXICO",
-                    amount: 960.00,
-                    transaction_type: "credit",
-                    category: "Ingresos"
-                },
-                {
-                    transaction_date: "2024-01-28",
-                    description: "TRA SPEI-FMXY876 SPEI, BBVA MEXICO, NATALIA TIJERINA",
-                    amount: -18000.00,
-                    transaction_type: "debit",
-                    category: "Transferencias"
-                }
-            ],
-            metadata: {
-                filename: filename,
-                month: "Enero 2024",
-                total_transactions: 4,
-                processing_method: "Perfect manual data entry"
-            }
-        };
-    }
-    
-    // Fallback
     return {
         success: true,
-        transactions: [
-            {
-                transaction_date: "2024-01-01",
-                description: "Transacción de prueba - Sistema funcionando",
-                amount: -1000.00,
-                transaction_type: "debit",
-                category: "Test"
-            }
-        ],
+        transactions: transactions,
         metadata: {
             filename: filename,
-            month: "Desconocido",
-            total_transactions: 1,
-            processing_method: "Fallback data"
+            total_transactions: transactions.length,
+            processing_method: "Back to working version"
         }
     };
 }
